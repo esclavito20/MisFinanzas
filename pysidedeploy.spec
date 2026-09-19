@@ -17,8 +17,12 @@
 
 [app]
 
-/ Nombre visible de la aplicacion en el telefono.
-title = Mis Finanzas
+/ Nombre de la aplicacion. Sin espacios a proposito: buildozer deriva de este
+/ titulo el nombre del paquete (package.name) y python-for-android lo usa como
+/ nombre de su distribucion, que forma parte de rutas de compilacion. Un espacio
+/ ahi hace que una ruta se parta al llegar al compilador y la compilacion falla
+/ en la primera receta con "C compiler cannot create executables".
+title = MisFinanzas
 
 / Punto de entrada. El despliegue de Android exige que se llame main.py.
 input_file = main.py

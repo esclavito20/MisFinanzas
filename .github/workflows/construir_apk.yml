@@ -253,6 +253,33 @@ jobs:
             /tmp/prueba.c && echo "compila correctamente" \
             || echo "FALLA con ccache"
 
+      # La clave de firma se conserva entre compilaciones. Android rechaza
+      # instalar un APK firmado con una clave distinta de la de la aplicacion ya
+      # instalada, y Gradle genera una clave nueva y desechable en cada ejecutor:
+      # sin esto, cada version obligaria a desinstalar la anterior y se perderian
+      # los datos guardados en el telefono. La clave vive en un secreto del
+      # repositorio, no en el codigo.
+      - name: Restaurar la clave de firma
+        env:
+          CLAVE_FIRMA: ${{ secrets.CLAVE_FIRMA_ANDROID }}
+        run: |
+          if [ -z "${CLAVE_FIRMA}" ]; then
+            echo "ERROR: falta el secreto CLAVE_FIRMA_ANDROID en el repositorio."
+            echo "       Sin el, cada compilacion firma con una clave distinta y"
+            echo "       Android no admitira instalar la version nueva encima."
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.android"
+          printf '%s' "${CLAVE_FIRMA}" | base64 -d > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+
+          # El alias y las contrasenas son los que Gradle espera para la firma de
+          # depuracion. Comprobarlos aqui evita descubrir el problema despues de
+          # veinte minutos de compilacion.
+          keytool -list -keystore "$HOME/.android/debug.keystore" \
+            -storepass android | tail -n 2
+
       # --force evita el aviso interactivo de crear un entorno virtual (en el
       # ejecutor no hay terminal) y --verbose deja el registro completo para
       # poder diagnosticar un fallo de compilacion nativa.

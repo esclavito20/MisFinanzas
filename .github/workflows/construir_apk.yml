@@ -110,6 +110,29 @@ jobs:
           ls -1 "$HOME/.pyside6_android_deploy" 2>/dev/null \
             || echo "vacia"
 
+      # pyside6-android-deploy no descarga el NDK por su cuenta: si no se le
+      # indica, queda sin valor y falla al resolver llvm-readobj para averiguar
+      # los modulos de Qt que necesita la aplicacion. Se instala la version que
+      # declara la propia herramienta (r26b) desde el repositorio de Google, sin
+      # depender del SDK del ejecutor ni de sus permisos de escritura.
+      - name: Descargar el NDK de Android
+        run: |
+          NDK_VERSION="r26b"
+          NDK_PATH="$HOME/android-ndk-${NDK_VERSION}"
+          ARCHIVO="$HOME/android-ndk-${NDK_VERSION}-linux.zip"
+
+          curl -fL --retry 3 -o "${ARCHIVO}" \
+            "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
+
+          unzip -q "${ARCHIVO}" -d "$HOME"
+          rm -f "${ARCHIVO}"
+
+          # La herramienta busca exactamente este ejecutable dentro del NDK.
+          test -x "${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readobj"
+
+          echo "NDK_PATH=${NDK_PATH}" >> "$GITHUB_ENV"
+          echo "NDK instalado en ${NDK_PATH}"
+
       # No se usa qtpip: su binario falla en el ejecutor por una biblioteca de
       # Qt ausente. Los wheels se descargan del servidor oficial de Qt, cada uno
       # de su propio directorio, y los nombres se resuelven leyendo el indice en
@@ -165,6 +188,7 @@ jobs:
         run: |
           pyside6-android-deploy \
             --config-file pysidedeploy.spec \
+            --ndk-path "${NDK_PATH}" \
             --force \
             --verbose
 

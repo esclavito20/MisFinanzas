@@ -110,6 +110,25 @@ jobs:
           ls -1 "$HOME/.pyside6_android_deploy" 2>/dev/null \
             || echo "vacia"
 
+      # El ejecutor trae un SDK completo cuyas licencias ya estan aceptadas, de
+      # modo que conviene reutilizarlo en lugar de que buildozer descargue otro.
+      # Aun asi se aceptan por adelantado: buildozer instala los paquetes que le
+      # faltan y aborta si alguna licencia no consta como aceptada, y en un
+      # ejecutor sin terminal nadie puede responder al aviso interactivo.
+      - name: Aceptar las licencias del SDK de Android
+        run: |
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ -w "${ANDROID_HOME}" ]; then
+            echo "SDK escribible: ${ANDROID_HOME}"
+          else
+            echo "AVISO: el SDK del ejecutor no admite escritura."
+          fi
+
+          yes | "${SDKMANAGER}" --sdk_root="${ANDROID_HOME}" --licenses > /dev/null
+
+          echo "Licencias aceptadas en ${ANDROID_HOME}"
+
       # pyside6-android-deploy no descarga el NDK por su cuenta: si no se le
       # indica, queda sin valor y falla al resolver llvm-readobj para averiguar
       # los modulos de Qt que necesita la aplicacion. Se instala la version que
@@ -177,8 +196,10 @@ jobs:
             pysidedeploy.spec
           sed -i "s|^wheel_shiboken *=.*|wheel_shiboken = ${RUEDA_SHIBOKEN}|" \
             pysidedeploy.spec
+          sed -i "s|^sdk_path *=.*|sdk_path = ${ANDROID_HOME}|" \
+            pysidedeploy.spec
 
-          grep -E '^(wheel_pyside|wheel_shiboken|mode|arch|input_file|icon) ' \
+          grep -E '^(wheel_pyside|wheel_shiboken|sdk_path|mode|arch|input_file|icon) ' \
             pysidedeploy.spec
 
       # --force evita el aviso interactivo de crear un entorno virtual (en el
@@ -189,6 +210,7 @@ jobs:
           pyside6-android-deploy \
             --config-file pysidedeploy.spec \
             --ndk-path "${NDK_PATH}" \
+            --sdk-path "${ANDROID_HOME}" \
             --force \
             --verbose
 

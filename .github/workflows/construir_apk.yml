@@ -110,24 +110,25 @@ jobs:
           ls -1 "$HOME/.pyside6_android_deploy" 2>/dev/null \
             || echo "vacia"
 
-      # El ejecutor trae un SDK completo cuyas licencias ya estan aceptadas, de
-      # modo que conviene reutilizarlo en lugar de que buildozer descargue otro.
-      # Aun asi se aceptan por adelantado: buildozer instala los paquetes que le
-      # faltan y aborta si alguna licencia no consta como aceptada, y en un
-      # ejecutor sin terminal nadie puede responder al aviso interactivo.
-      - name: Aceptar las licencias del SDK de Android
+      # El ejecutor trae un SDK cuyas licencias ya estan aceptadas. No se le
+      # indica a pyside6-android-deploy ese SDK: buildozer busca sdkmanager en la
+      # ruta heredada <sdk>/tools/bin/sdkmanager, que las instalaciones modernas
+      # ya no tienen, y aborta. Se deja que buildozer gestione el suyo y se le
+      # copian las licencias para que no pregunte: en un ejecutor sin terminal
+      # nadie puede responder al aviso y los paquetes se omiten sin mas.
+      - name: Preparar el SDK de buildozer con las licencias aceptadas
         run: |
           SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-
-          if [ -w "${ANDROID_HOME}" ]; then
-            echo "SDK escribible: ${ANDROID_HOME}"
-          else
-            echo "AVISO: el SDK del ejecutor no admite escritura."
-          fi
+          SDK_BUILDOZER="$HOME/.buildozer/android/platform/android-sdk"
 
           yes | "${SDKMANAGER}" --sdk_root="${ANDROID_HOME}" --licenses > /dev/null
-
           echo "Licencias aceptadas en ${ANDROID_HOME}"
+
+          mkdir -p "${SDK_BUILDOZER}"
+          cp -a "${ANDROID_HOME}/licenses" "${SDK_BUILDOZER}/"
+
+          echo "--- Licencias copiadas al SDK de buildozer ---"
+          ls -1 "${SDK_BUILDOZER}/licenses"
 
       # pyside6-android-deploy no descarga el NDK por su cuenta: si no se le
       # indica, queda sin valor y falla al resolver llvm-readobj para averiguar
@@ -196,10 +197,8 @@ jobs:
             pysidedeploy.spec
           sed -i "s|^wheel_shiboken *=.*|wheel_shiboken = ${RUEDA_SHIBOKEN}|" \
             pysidedeploy.spec
-          sed -i "s|^sdk_path *=.*|sdk_path = ${ANDROID_HOME}|" \
-            pysidedeploy.spec
 
-          grep -E '^(wheel_pyside|wheel_shiboken|sdk_path|mode|arch|input_file|icon) ' \
+          grep -E '^(wheel_pyside|wheel_shiboken|mode|arch|input_file|icon) ' \
             pysidedeploy.spec
 
       # --force evita el aviso interactivo de crear un entorno virtual (en el
@@ -210,7 +209,6 @@ jobs:
           pyside6-android-deploy \
             --config-file pysidedeploy.spec \
             --ndk-path "${NDK_PATH}" \
-            --sdk-path "${ANDROID_HOME}" \
             --force \
             --verbose
 

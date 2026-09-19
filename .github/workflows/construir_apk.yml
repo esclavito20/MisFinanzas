@@ -253,38 +253,6 @@ jobs:
             /tmp/prueba.c && echo "compila correctamente" \
             || echo "FALLA con ccache"
 
-      # La clave de firma se conserva entre compilaciones. Android rechaza
-      # instalar un APK firmado con una clave distinta de la de la aplicacion ya
-      # instalada, y Gradle genera una clave nueva y desechable en cada ejecutor:
-      # sin esto, cada version obligaria a desinstalar la anterior y se perderian
-      # los datos guardados en el telefono.
-      #
-      # La clave viaja en el repositorio y no en un secreto. Es la clave de
-      # depuracion del proyecto: no otorga ningun privilegio —los canales de
-      # distribucion rechazan las compilaciones de depuracion— y lo unico que se
-      # le pide es permanecer igual. Ademas, guardarla como secreto resulta
-      # inviable: un valor de este tamano impide que la ejecucion arranque.
-      - name: Restaurar la clave de firma
-        run: |
-          ORIGEN=".github/debug.keystore"
-
-          if [ ! -f "${ORIGEN}" ]; then
-            echo "ERROR: falta ${ORIGEN} en el repositorio."
-            echo "       Sin una clave estable, Android no admitira instalar la"
-            echo "       version nueva encima de la que ya esta en el telefono."
-            exit 1
-          fi
-
-          mkdir -p "$HOME/.android"
-          cp "${ORIGEN}" "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
-
-          # El alias y las contrasenas son los que Gradle espera para la firma de
-          # depuracion. Comprobarlos aqui evita descubrir el problema despues de
-          # veinte minutos de compilacion.
-          keytool -list -keystore "$HOME/.android/debug.keystore" \
-            -storepass android | tail -n 2
-
       # --force evita el aviso interactivo de crear un entorno virtual (en el
       # ejecutor no hay terminal) y --verbose deja el registro completo para
       # poder diagnosticar un fallo de compilacion nativa.
@@ -299,7 +267,7 @@ jobs:
             --keep-deployment-files \
             --verbose
 
-      - name: Reunir el APK
+      - name: Reunir y firmar el APK
         run: |
           mkdir -p dist-android
 
@@ -311,13 +279,7 @@ jobs:
             APK="$(find . -name '*.apk' -not -path './.git/*' -print -quit)"
           fi
 
-          if [ -n "${APK}" ]; then
-            cp -v "${APK}" "dist-android/MisFinanzas-${VERSION}-android.apk"
-          fi
-
-          ls -lh dist-android
-
-          if [ -z "$(find dist-android -name '*.apk' -print -quit)" ]; then
+          if [ -z "${APK}" ]; then
             echo "====================================================="
             echo " La compilacion no genero APK. Ultimas lineas de los"
             echo " registros de configuracion de cada receta:"
@@ -339,6 +301,36 @@ jobs:
 
             exit 1
           fi
+
+          RESULTADO="dist-android/MisFinanzas-${VERSION}-android.apk"
+
+          # Gradle firma la compilacion con una clave que genera y descarta en
+          # cada ejecucion: Android no admitiria instalar una version nueva
+          # firmada con otra clave, y la unica salida seria desinstalar, con la
+          # perdida de los datos del telefono. Por eso el APK se firma aqui con
+          # la clave estable del repositorio, despues de alinearlo.
+          #
+          # La clave es la de depuracion del proyecto: no otorga ningun
+          # privilegio —los canales de distribucion rechazan las compilaciones de
+          # depuracion— y lo unico que se le pide es permanecer igual. Por eso
+          # viaja en el repositorio y no en un secreto, que ademas resulta
+          # inviable: un valor de este tamano impide que la ejecucion arranque.
+          ZIPALIGN="$(find "${ANDROID_HOME}/build-tools" -name zipalign -type f | sort | tail -n 1)"
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -name apksigner -type f | sort | tail -n 1)"
+
+          "${ZIPALIGN}" -p -f 4 "${APK}" "${RESULTADO}"
+
+          "${APKSIGNER}" sign \
+            --ks .github/debug.keystore \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --ks-key-alias androiddebugkey \
+            "${RESULTADO}"
+
+          echo "--- Firma del APK publicado ---"
+          "${APKSIGNER}" verify --print-certs "${RESULTADO}" | head -n 6
+
+          ls -lh dist-android
 
       - name: Publicar el artefacto
         uses: actions/upload-artifact@v4

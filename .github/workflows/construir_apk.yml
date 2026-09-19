@@ -115,34 +115,43 @@ jobs:
       # busca sdkmanager en <sdk>/tools/bin y python-for-android busca avdmanager
       # en <sdk>/cmdline-tools/latest/bin, y aborta si no las ve. Ademas, cuando
       # el directorio del SDK ya existe, buildozer lo da por valido y no descarga
-      # nada. Se le prepara por tanto un SDK con las dos rutas resueltas mediante
-      # delegados al SDK del ejecutor y con las licencias ya aceptadas copiadas de
-      # el: sin licencias no hay respuesta posible al aviso interactivo, y los
-      # paquetes se omiten en silencio.
+      # nada. Se le prepara por tanto un SDK con ambas rutas resueltas y con las
+      # licencias ya aceptadas copiadas del SDK del ejecutor: sin licencias no
+      # hay respuesta posible al aviso interactivo y los paquetes se omiten en
+      # silencio.
+      #
+      # Las herramientas se copian y no se enlazan porque avdmanager deduce el
+      # directorio del SDK a partir de su propia ubicacion: python-for-android lo
+      # interroga para saber que plataformas hay instaladas, y con un enlace
+      # responderia por el SDK del ejecutor en vez de por el de buildozer.
       - name: Preparar el SDK que esperan buildozer y python-for-android
         run: |
           CMDLINE="${ANDROID_HOME}/cmdline-tools/latest/bin"
           SDK_BUILDOZER="$HOME/.buildozer/android/platform/android-sdk"
+          PLATAFORMA="31"
 
           yes | "${CMDLINE}/sdkmanager" --sdk_root="${ANDROID_HOME}" --licenses > /dev/null
 
           mkdir -p "${SDK_BUILDOZER}"
           cp -a "${ANDROID_HOME}/licenses" "${SDK_BUILDOZER}/"
+          cp -aL "${ANDROID_HOME}/cmdline-tools" "${SDK_BUILDOZER}/"
 
-          # Los delegados conservan los argumentos recibidos, entre ellos el
-          # --sdk_root que anade buildozer y que apunta a este mismo SDK.
-          for herramienta in sdkmanager avdmanager; do
-            for carpeta in "tools/bin" "cmdline-tools/latest/bin"; do
-              destino="${SDK_BUILDOZER}/${carpeta}/${herramienta}"
-              mkdir -p "$(dirname "${destino}")"
-              printf '%s\n' '#!/usr/bin/env bash' \
-                "exec \"${CMDLINE}/${herramienta}\" \"\$@\"" > "${destino}"
-              chmod +x "${destino}"
-            done
-          done
+          mkdir -p "${SDK_BUILDOZER}/tools/bin"
+          printf '%s\n' '#!/usr/bin/env bash' \
+            "exec \"${SDK_BUILDOZER}/cmdline-tools/latest/bin/sdkmanager\" \"\$@\"" \
+            > "${SDK_BUILDOZER}/tools/bin/sdkmanager"
+          chmod +x "${SDK_BUILDOZER}/tools/bin/sdkmanager"
 
-          echo "--- SDK preparado ---"
-          find "${SDK_BUILDOZER}" -maxdepth 4 -type f | sort
+          echo "--- Herramientas copiadas ---"
+          ls -l "${SDK_BUILDOZER}/tools/bin" "${SDK_BUILDOZER}/cmdline-tools"
+
+          # La compilacion se hace contra la plataforma que declara ANDROIDAPI.
+          "${SDK_BUILDOZER}/tools/bin/sdkmanager" \
+            --sdk_root="${SDK_BUILDOZER}" \
+            "platform-tools" "platforms;android-${PLATAFORMA}"
+
+          echo "--- Plataformas disponibles ---"
+          ls -1 "${SDK_BUILDOZER}/platforms"
 
       # pyside6-android-deploy no descarga el NDK por su cuenta: si no se le
       # indica, queda sin valor y falla al resolver llvm-readobj para averiguar

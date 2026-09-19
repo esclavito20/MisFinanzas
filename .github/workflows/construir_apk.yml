@@ -72,7 +72,7 @@ jobs:
       - name: Instalar PySide6, qtpip y buildozer
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "PySide6==${PYSIDE_VERSION}" qtpip
+          python -m pip install "PySide6==${PYSIDE_VERSION}"
           python -m pip install "buildozer==1.5.0" "cython==0.29.33"
 
           # PySide6 distribuye en requirements-android.txt los paquetes que
@@ -88,49 +88,63 @@ jobs:
           # disponible en este entorno.
           pyside6-android-deploy --help
 
-      # El propio PySide6 distribuye el script que conoce las versiones exactas
-      # de SDK y NDK que exige esta version de Qt, y las deja en la cache
-      # ~/.pyside6-android-deploy, que pyside6-android-deploy detecta sola.
-      - name: Descargar el SDK y el NDK de Android
+      # No se usa el script tools/cross_compile_android de PySide6: descarga un
+      # NDK (r27c) distinto del que exige pyside6-android-deploy (r26b) y lo
+      # deja en una cache que la herramienta no consulta. Se prefiere que la
+      # propia herramienta resuelva sus dependencias y se registra el estado del
+      # entorno para poder diagnosticar cualquier fallo de resolucion.
+      - name: Reconocer el entorno de Android
         run: |
-          git clone --depth 1 --branch "v${PYSIDE_VERSION}" \
-            https://code.qt.io/pyside/pyside-setup.git "$HOME/pyside-setup" \
-            || git clone --depth 1 \
-              https://code.qt.io/pyside/pyside-setup.git "$HOME/pyside-setup"
+          echo "ANDROID_HOME=${ANDROID_HOME:-sin definir}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-sin definir}"
+          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-sin definir}"
 
-          python -m pip install -r \
-            "$HOME/pyside-setup/tools/cross_compile_android/requirements.txt"
+          if [ -n "${ANDROID_HOME:-}" ] && [ -d "${ANDROID_HOME}/ndk" ]; then
+            echo "--- NDK preinstalados en el ejecutor ---"
+            ls -1 "${ANDROID_HOME}/ndk"
+          else
+            echo "El ejecutor no trae NDK: lo descargara pyside6-android-deploy."
+          fi
 
-          python "$HOME/pyside-setup/tools/cross_compile_android/main.py" \
-            --download-only --skip-update --auto-accept-license
+          echo "--- Cache de pyside6-android-deploy ---"
+          ls -1 "$HOME/.pyside6_android_deploy" 2>/dev/null \
+            || echo "vacia"
 
-          echo "--- Contenido de la cache de despliegue ---"
-          find "$HOME/.pyside6-android-deploy" -maxdepth 2 -type d | sort
-
+      # No se usa qtpip: su binario falla en el ejecutor por una biblioteca de
+      # Qt ausente. Los wheels se descargan del servidor oficial de Qt, cada uno
+      # de su propio directorio, y los nombres se resuelven leyendo el indice en
+      # lugar de componerlos a mano: en la serie 6.11 el paquete paso a llamarse
+      # "pyside6" en minusculas y los nombres publicados no son estables.
       - name: Descargar los wheels de Android
         run: |
+          BASE="https://download.qt.io/official_releases/QtForPython"
+          PATRON="-${PYSIDE_VERSION}-"
+
           mkdir -p "$HOME/ruedas"
           cd "$HOME/ruedas"
 
-          qtpip download PySide6 --android --arch aarch64
-          qtpip download shiboken6 --android --arch aarch64 || true
+          curl -fsSL "${BASE}/pyside6/" -o indice_pyside.html
+          curl -fsSL "${BASE}/shiboken6/" -o indice_shiboken.html
 
-          ls -lh
+          NOMBRE_PYSIDE="$(grep -oE 'pyside6-[0-9.]+-[0-9.]+-cp[0-9]+-cp[0-9]+-android_aarch64\.whl' indice_pyside.html | grep -- "${PATRON}" | sort -u | head -n 1)"
+          NOMBRE_SHIBOKEN="$(grep -oE 'shiboken6-[0-9.]+-[0-9.]+-cp[0-9]+-cp[0-9]+-android_aarch64\.whl' indice_shiboken.html | grep -- "${PATRON}" | sort -u | head -n 1)"
 
-          RUEDA_PYSIDE="$(find "$HOME/ruedas" -name 'PySide6-*aarch64*.whl' \
-            -print -quit)"
-          RUEDA_SHIBOKEN="$(find "$HOME/ruedas" -name 'shiboken6-*aarch64*.whl' \
-            -print -quit)"
-
-          if [ -z "${RUEDA_PYSIDE}" ] || [ -z "${RUEDA_SHIBOKEN}" ]; then
-            echo "ERROR: no se descargaron los dos wheels de Android."
+          if [ -z "${NOMBRE_PYSIDE}" ] || [ -z "${NOMBRE_SHIBOKEN}" ]; then
+            echo "ERROR: no se localizaron los wheels de Android de ${PYSIDE_VERSION}."
+            echo "PySide6:   '${NOMBRE_PYSIDE}'"
+            echo "Shiboken6: '${NOMBRE_SHIBOKEN}'"
             exit 1
           fi
 
-          echo "RUEDA_PYSIDE=${RUEDA_PYSIDE}" >> "$GITHUB_ENV"
-          echo "RUEDA_SHIBOKEN=${RUEDA_SHIBOKEN}" >> "$GITHUB_ENV"
-          echo "PySide6:   ${RUEDA_PYSIDE}"
-          echo "Shiboken6: ${RUEDA_SHIBOKEN}"
+          curl -fL --retry 3 -O "${BASE}/pyside6/${NOMBRE_PYSIDE}"
+          curl -fL --retry 3 -O "${BASE}/shiboken6/${NOMBRE_SHIBOKEN}"
+
+          ls -lh
+
+          echo "RUEDA_PYSIDE=${PWD}/${NOMBRE_PYSIDE}" >> "$GITHUB_ENV"
+          echo "RUEDA_SHIBOKEN=${PWD}/${NOMBRE_SHIBOKEN}" >> "$GITHUB_ENV"
+          echo "PySide6:   ${NOMBRE_PYSIDE}"
+          echo "Shiboken6: ${NOMBRE_SHIBOKEN}"
 
       # El spec del repositorio deja las rutas de los wheels vacias porque
       # dependen de cada maquina: aqui se rellenan en la copia de trabajo.

@@ -74,7 +74,18 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "PySide6==${PYSIDE_VERSION}" qtpip
           python -m pip install "buildozer==1.5.0" "cython==0.29.33"
+
+          # PySide6 distribuye en requirements-android.txt los paquetes que
+          # necesita pyside6-android-deploy (jinja2, pkginfo, tqdm y una version
+          # concreta de packaging). Instalarlos desde ese mismo archivo evita
+          # duplicar aqui versiones que podrian quedar desfasadas.
+          REQUISITOS="$(python -c 'import pathlib, PySide6; print(pathlib.Path(PySide6.__file__).parent / "scripts" / "requirements-android.txt")')"
+          python -m pip install -r "${REQUISITOS}"
+
           python -c "import PySide6; print('PySide6', PySide6.__version__)"
+
+          # Falla pronto, y con un mensaje claro, si el despliegue no esta
+          # disponible en este entorno.
           pyside6-android-deploy --help
 
       # El propio PySide6 distribuye el script que conoce las versiones exactas

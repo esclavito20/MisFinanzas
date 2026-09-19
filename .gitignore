@@ -1,0 +1,24 @@
+# Entorno de desarrollo y artefactos de compilacion.
+.venv/
+__pycache__/
+*.py[cod]
+build/
+dist/
+release/
+installer/Output/
+
+# Datos del usuario. La base de datos, los respaldos y los registros son
+# informacion financiera privada: no deben viajar al repositorio ni al APK.
+data/
+backups/
+backups_manual/
+updates/
+logs/
+sincronizacion.json
+*.db
+*.log
+
+# Sistema operativo.
+Thumbs.db
+desktop.ini
+.DS_Store

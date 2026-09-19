@@ -1,0 +1,185 @@
+# Compilacion del APK de Mis Finanzas en un host Linux alojado.
+#
+# Este flujo reproduce paso a paso lo que hace CONSTRUIR_APK.sh, que no puede
+# ejecutarse en Windows porque pyside6-android-deploy solo funciona en Linux o
+# macOS. Al ejecutarse en un entorno Linux de GitHub Actions no hace falta
+# instalar WSL2, el SDK de Android ni el NDK en el equipo de desarrollo.
+#
+# El APK queda disponible de dos formas:
+#   - Como artefacto descargable de la ejecucion (requiere comprimirlo).
+#   - Adjunto a una release, para descargarlo directamente desde el telefono.
+
+name: Construir APK de Android
+
+# Solo manual: cada ejecucion descarga el SDK, el NDK y compila Qt para
+# Android, de modo que no debe dispararse con cada cambio en el repositorio.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-android
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: Compilar el APK
+    runs-on: ubuntu-22.04
+
+    # La primera compilacion descarga varios gigabytes y compila codigo nativo.
+    timeout-minutes: 180
+
+    env:
+      # Debe coincidir con la version declarada en requirements.txt y con la
+      # que usa el ejecutable de escritorio: los wheels de Android que se
+      # descargan tienen que ser de la misma version que el PySide6 anfitrion.
+      PYSIDE_VERSION: "6.11.2"
+
+      # Python 3.11 y no 3.12 o superior: el [python] android_packages de
+      # pysidedeploy.spec fija cython==0.29.33, que no compila en 3.12.
+      PYTHON_VERSION: "3.11"
+
+    steps:
+      - name: Descargar el codigo
+        uses: actions/checkout@v4
+
+      - name: Leer la version de la aplicacion
+        run: |
+          echo "VERSION=$(tr -d '[:space:]' < VERSION.txt)" >> "$GITHUB_ENV"
+          echo "Version declarada: $(tr -d '[:space:]' < VERSION.txt)"
+
+      - name: Instalar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Instalar las dependencias del sistema
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            git zip unzip autoconf automake libtool pkg-config \
+            build-essential ccache zlib1g-dev libncurses5-dev \
+            libncursesw5-dev cmake libffi-dev libssl-dev
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Instalar PySide6, qtpip y buildozer
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "PySide6==${PYSIDE_VERSION}" qtpip
+          python -m pip install "buildozer==1.5.0" "cython==0.29.33"
+          python -c "import PySide6; print('PySide6', PySide6.__version__)"
+          pyside6-android-deploy --help
+
+      # El propio PySide6 distribuye el script que conoce las versiones exactas
+      # de SDK y NDK que exige esta version de Qt, y las deja en la cache
+      # ~/.pyside6-android-deploy, que pyside6-android-deploy detecta sola.
+      - name: Descargar el SDK y el NDK de Android
+        run: |
+          git clone --depth 1 --branch "v${PYSIDE_VERSION}" \
+            https://code.qt.io/pyside/pyside-setup.git "$HOME/pyside-setup" \
+            || git clone --depth 1 \
+              https://code.qt.io/pyside/pyside-setup.git "$HOME/pyside-setup"
+
+          python -m pip install -r \
+            "$HOME/pyside-setup/tools/cross_compile_android/requirements.txt"
+
+          python "$HOME/pyside-setup/tools/cross_compile_android/main.py" \
+            --download-only --skip-update --auto-accept-license
+
+          echo "--- Contenido de la cache de despliegue ---"
+          find "$HOME/.pyside6-android-deploy" -maxdepth 2 -type d | sort
+
+      - name: Descargar los wheels de Android
+        run: |
+          mkdir -p "$HOME/ruedas"
+          cd "$HOME/ruedas"
+
+          qtpip download PySide6 --android --arch aarch64
+          qtpip download shiboken6 --android --arch aarch64 || true
+
+          ls -lh
+
+          RUEDA_PYSIDE="$(find "$HOME/ruedas" -name 'PySide6-*aarch64*.whl' \
+            -print -quit)"
+          RUEDA_SHIBOKEN="$(find "$HOME/ruedas" -name 'shiboken6-*aarch64*.whl' \
+            -print -quit)"
+
+          if [ -z "${RUEDA_PYSIDE}" ] || [ -z "${RUEDA_SHIBOKEN}" ]; then
+            echo "ERROR: no se descargaron los dos wheels de Android."
+            exit 1
+          fi
+
+          echo "RUEDA_PYSIDE=${RUEDA_PYSIDE}" >> "$GITHUB_ENV"
+          echo "RUEDA_SHIBOKEN=${RUEDA_SHIBOKEN}" >> "$GITHUB_ENV"
+          echo "PySide6:   ${RUEDA_PYSIDE}"
+          echo "Shiboken6: ${RUEDA_SHIBOKEN}"
+
+      # El spec del repositorio deja las rutas de los wheels vacias porque
+      # dependen de cada maquina: aqui se rellenan en la copia de trabajo.
+      - name: Configurar el despliegue
+        run: |
+          sed -i "s|^wheel_pyside *=.*|wheel_pyside = ${RUEDA_PYSIDE}|" \
+            pysidedeploy.spec
+          sed -i "s|^wheel_shiboken *=.*|wheel_shiboken = ${RUEDA_SHIBOKEN}|" \
+            pysidedeploy.spec
+
+          grep -E '^(wheel_pyside|wheel_shiboken|mode|arch|input_file|icon) ' \
+            pysidedeploy.spec
+
+      # --force evita el aviso interactivo de crear un entorno virtual (en el
+      # ejecutor no hay terminal) y --verbose deja el registro completo para
+      # poder diagnosticar un fallo de compilacion nativa.
+      - name: Compilar el APK
+        run: |
+          pyside6-android-deploy \
+            --config-file pysidedeploy.spec \
+            --force \
+            --verbose
+
+      - name: Reunir el APK
+        run: |
+          mkdir -p dist-android
+
+          find . -name '*.apk' -not -path './.git/*' \
+            -exec cp -v {} dist-android/ \;
+
+          ls -lh dist-android
+
+          if [ -z "$(find dist-android -name '*.apk' -print -quit)" ]; then
+            echo "ERROR: la compilacion termino sin generar un APK."
+            exit 1
+          fi
+
+      - name: Publicar el artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: MisFinanzas-${{ env.VERSION }}-apk
+          path: dist-android/*.apk
+          if-no-files-found: error
+
+      # La release permite descargar el APK directamente desde el telefono, sin
+      # descomprimir el artefacto ni iniciar sesion.
+      #
+      # Se marca como prepublicacion a proposito: la aplicacion de escritorio
+      # busca versiones nuevas en /releases/latest, que excluye las
+      # prepublicaciones, y solo acepta adjuntos .exe. Sin esta marca, una
+      # publicacion con un APK le haria creer que existe una version nueva del
+      # instalador de Windows.
+      - name: Adjuntar el APK a la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "android-v${VERSION}" \
+            --title "Mis Finanzas ${VERSION} para Android" \
+            --notes "APK generado automaticamente. Descargalo en el telefono y abrelo para instalarlo; el sistema pedira autorizar la instalacion desde un origen desconocido." \
+            --prerelease \
+            --latest=false \
+            dist-android/*.apk \
+          || gh release upload "android-v${VERSION}" dist-android/*.apk --clobber

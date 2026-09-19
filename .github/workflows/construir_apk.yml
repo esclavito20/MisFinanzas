@@ -153,28 +153,24 @@ jobs:
           echo "--- Plataformas disponibles ---"
           ls -1 "${SDK_BUILDOZER}/platforms"
 
-      # pyside6-android-deploy no descarga el NDK por su cuenta: si no se le
-      # indica, queda sin valor y falla al resolver llvm-readobj para averiguar
-      # los modulos de Qt que necesita la aplicacion. Se instala la version que
-      # declara la propia herramienta (r26b) desde el repositorio de Google, sin
-      # depender del SDK del ejecutor ni de sus permisos de escritura.
-      - name: Descargar el NDK de Android
+      # El asistente de PySide6 declara necesitar el NDK r26b, pero
+      # python-for-android recomienda el 28c y con el r26b el compilador cruzado
+      # no consigue enlazar ni el primer ejecutable de prueba de una receta. El
+      # ejecutor ya trae el 28c instalado, de modo que se usa ese y no se
+      # descarga nada.
+      - name: Localizar el NDK de Android
         run: |
-          NDK_VERSION="r26b"
-          NDK_PATH="$HOME/android-ndk-${NDK_VERSION}"
-          ARCHIVO="$HOME/android-ndk-${NDK_VERSION}-linux.zip"
+          NDK_PATH="$(ls -d "${ANDROID_HOME}/ndk/28."* 2>/dev/null | sort | tail -n 1)"
 
-          curl -fL --retry 3 -o "${ARCHIVO}" \
-            "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
-
-          unzip -q "${ARCHIVO}" -d "$HOME"
-          rm -f "${ARCHIVO}"
+          if [ -z "${NDK_PATH}" ]; then
+            NDK_PATH="${ANDROID_NDK_HOME}"
+          fi
 
           # La herramienta busca exactamente este ejecutable dentro del NDK.
           test -x "${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readobj"
 
           echo "NDK_PATH=${NDK_PATH}" >> "$GITHUB_ENV"
-          echo "NDK instalado en ${NDK_PATH}"
+          echo "NDK en uso: ${NDK_PATH}"
 
       # No se usa qtpip: su binario falla en el ejecutor por una biblioteca de
       # Qt ausente. Los wheels se descargan del servidor oficial de Qt, cada uno
@@ -245,7 +241,20 @@ jobs:
           ls -lh dist-android
 
           if [ -z "$(find dist-android -name '*.apk' -print -quit)" ]; then
-            echo "ERROR: la compilacion termino sin generar un APK."
+            echo "====================================================="
+            echo " La compilacion no genero APK. Ultimas lineas de los"
+            echo " registros de configuracion de cada receta:"
+            echo "====================================================="
+
+            # pyside6-android-deploy termina con exito aunque buildozer falle, y
+            # el motivo real de un fallo de compilacion nativa queda en el
+            # config.log de la receta, que no se publica en el registro del
+            # trabajo.
+            for registro in $(find . -name 'config.log' -path '*other_builds*' | head -n 3); do
+              echo "--- ${registro} ---"
+              tail -n 45 "${registro}"
+            done
+
             exit 1
           fi
 

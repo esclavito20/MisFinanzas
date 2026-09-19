@@ -220,15 +220,46 @@ jobs:
           grep -E '^(wheel_pyside|wheel_shiboken|mode|arch|input_file|icon) ' \
             pysidedeploy.spec
 
+      # Aisla el fallo que impide compilar la primera receta: el compilador
+      # cruzado del NDK no consigue crear un ejecutable de prueba. Se reproduce
+      # aqui la misma invocacion, con y sin ccache, para saber cual de las dos
+      # formas falla. Las ordenes llevan || echo para no abortar el trabajo y
+      # poder ver el resultado completo.
+      - name: Comprobar el compilador cruzado
+        run: |
+          NDK_BIN="${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          SYSROOT="${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          BANDERAS="-target aarch64-linux-android21 -fomit-frame-pointer -march=armv8-a -fPIC"
+
+          printf 'int main(void) { return 0; }\n' > /tmp/prueba.c
+
+          echo "--- clang ---"
+          "${NDK_BIN}/clang" --version || true
+
+          echo "--- sysroot ---"
+          ls -d "${SYSROOT}" || echo "no existe"
+
+          echo "--- sin ccache ---"
+          "${NDK_BIN}/clang" ${BANDERAS} -o /tmp/prueba1 /tmp/prueba.c \
+            && echo "compila correctamente" || echo "FALLA sin ccache"
+
+          echo "--- con ccache, como lo invoca python-for-android ---"
+          /usr/bin/ccache "${NDK_BIN}/clang" ${BANDERAS} -o /tmp/prueba2 \
+            /tmp/prueba.c && echo "compila correctamente" \
+            || echo "FALLA con ccache"
+
       # --force evita el aviso interactivo de crear un entorno virtual (en el
       # ejecutor no hay terminal) y --verbose deja el registro completo para
       # poder diagnosticar un fallo de compilacion nativa.
+      # --keep-deployment-files conserva el arbol de compilacion, de modo que si
+      # algo falla el config.log de la receta sigue disponible para leerlo.
       - name: Compilar el APK
         run: |
           pyside6-android-deploy \
             --config-file pysidedeploy.spec \
             --ndk-path "${NDK_PATH}" \
             --force \
+            --keep-deployment-files \
             --verbose
 
       - name: Reunir el APK
@@ -250,10 +281,17 @@ jobs:
             # el motivo real de un fallo de compilacion nativa queda en el
             # config.log de la receta, que no se publica en el registro del
             # trabajo.
-            for registro in $(find . -name 'config.log' -path '*other_builds*' | head -n 3); do
-              echo "--- ${registro} ---"
-              tail -n 45 "${registro}"
-            done
+            REGISTROS="$(find . -name 'config.log' -path '*other_builds*' 2>/dev/null | head -n 3)"
+
+            if [ -z "${REGISTROS}" ]; then
+              echo "No se conservo ningun config.log. Arbol de compilacion:"
+              find . -maxdepth 7 -name 'libffi' -print 2>/dev/null | head -n 5
+            else
+              for registro in ${REGISTROS}; do
+                echo "--- ${registro} ---"
+                tail -n 45 "${registro}"
+              done
+            fi
 
             exit 1
           fi

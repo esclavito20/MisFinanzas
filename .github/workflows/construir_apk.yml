@@ -271,8 +271,17 @@ jobs:
         run: |
           mkdir -p dist-android
 
-          find . -name '*.apk' -not -path './.git/*' \
-            -exec cp -v {} dist-android/ \;
+          # buildozer deja el mismo APK en varios nombres dentro de bin/: se
+          # publica una sola copia, con el nombre convenido por el proyecto.
+          APK="$(find . -name '*arm64-v8a*debug.apk' -not -path './.git/*' -print -quit)"
+
+          if [ -z "${APK}" ]; then
+            APK="$(find . -name '*.apk' -not -path './.git/*' -print -quit)"
+          fi
+
+          if [ -n "${APK}" ]; then
+            cp -v "${APK}" "dist-android/MisFinanzas-${VERSION}-android.apk"
+          fi
 
           ls -lh dist-android
 

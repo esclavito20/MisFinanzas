@@ -110,38 +110,39 @@ jobs:
           ls -1 "$HOME/.pyside6_android_deploy" 2>/dev/null \
             || echo "vacia"
 
-      # buildozer exige que el SDK tenga sdkmanager en la ruta heredada
-      # <sdk>/tools/bin/sdkmanager, que las instalaciones modernas ya no usan, y
-      # cuando el directorio del SDK ya existe lo da por valido sin descargar
-      # nada mas. Se le prepara por tanto un SDK con esa ruta resuelta mediante
-      # un delegado al sdkmanager real del ejecutor y con las licencias ya
-      # aceptadas copiadas de su SDK: sin ellas buildozer no obtiene respuesta al
-      # aviso interactivo, omite los paquetes y continua como si los hubiera
-      # instalado.
-      - name: Preparar el SDK que espera buildozer
+      # buildozer y python-for-android exigen encontrar las herramientas del SDK
+      # en rutas heredadas que las instalaciones modernas ya no usan: buildozer
+      # busca sdkmanager en <sdk>/tools/bin y python-for-android busca avdmanager
+      # en <sdk>/cmdline-tools/latest/bin, y aborta si no las ve. Ademas, cuando
+      # el directorio del SDK ya existe, buildozer lo da por valido y no descarga
+      # nada. Se le prepara por tanto un SDK con las dos rutas resueltas mediante
+      # delegados al SDK del ejecutor y con las licencias ya aceptadas copiadas de
+      # el: sin licencias no hay respuesta posible al aviso interactivo, y los
+      # paquetes se omiten en silencio.
+      - name: Preparar el SDK que esperan buildozer y python-for-android
         run: |
-          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          CMDLINE="${ANDROID_HOME}/cmdline-tools/latest/bin"
           SDK_BUILDOZER="$HOME/.buildozer/android/platform/android-sdk"
 
-          # Licencias aceptadas en el SDK del ejecutor, que es el origen de las
-          # que se copian despues.
-          yes | "${SDKMANAGER}" --sdk_root="${ANDROID_HOME}" --licenses > /dev/null
+          yes | "${CMDLINE}/sdkmanager" --sdk_root="${ANDROID_HOME}" --licenses > /dev/null
 
-          mkdir -p "${SDK_BUILDOZER}/tools/bin"
+          mkdir -p "${SDK_BUILDOZER}"
           cp -a "${ANDROID_HOME}/licenses" "${SDK_BUILDOZER}/"
 
-          # buildozer invoca este ejecutable anadiendo --sdk_root, que apunta a
-          # su propio SDK: el delegado conserva los argumentos y el sdkmanager
-          # real instala los paquetes en la ubicacion indicada.
-          cat > "${SDK_BUILDOZER}/tools/bin/sdkmanager" <<FIN
-          #!/usr/bin/env bash
-          exec "${SDKMANAGER}" "\$@"
-          FIN
+          # Los delegados conservan los argumentos recibidos, entre ellos el
+          # --sdk_root que anade buildozer y que apunta a este mismo SDK.
+          for herramienta in sdkmanager avdmanager; do
+            for carpeta in "tools/bin" "cmdline-tools/latest/bin"; do
+              destino="${SDK_BUILDOZER}/${carpeta}/${herramienta}"
+              mkdir -p "$(dirname "${destino}")"
+              printf '%s\n' '#!/usr/bin/env bash' \
+                "exec \"${CMDLINE}/${herramienta}\" \"\$@\"" > "${destino}"
+              chmod +x "${destino}"
+            done
+          done
 
-          chmod +x "${SDK_BUILDOZER}/tools/bin/sdkmanager"
-
-          echo "--- Licencias disponibles para buildozer ---"
-          ls -1 "${SDK_BUILDOZER}/licenses"
+          echo "--- SDK preparado ---"
+          find "${SDK_BUILDOZER}" -maxdepth 4 -type f | sort
 
       # pyside6-android-deploy no descarga el NDK por su cuenta: si no se le
       # indica, queda sin valor y falla al resolver llvm-readobj para averiguar

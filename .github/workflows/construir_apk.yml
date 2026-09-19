@@ -169,7 +169,12 @@ jobs:
           # La herramienta busca exactamente este ejecutable dentro del NDK.
           test -x "${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readobj"
 
+          # El ejecutor deja estas variables apuntando a otro NDK de los que
+          # trae instalados; se alinean con el que se va a usar para que ninguna
+          # herramienta tome el sysroot de una version y el compilador de otra.
           echo "NDK_PATH=${NDK_PATH}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${NDK_PATH}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${NDK_PATH}" >> "$GITHUB_ENV"
           echo "NDK en uso: ${NDK_PATH}"
 
       # No se usa qtpip: su binario falla en el ejecutor por una biblioteca de
@@ -280,17 +285,15 @@ jobs:
             # pyside6-android-deploy termina con exito aunque buildozer falle, y
             # el motivo real de un fallo de compilacion nativa queda en el
             # config.log de la receta, que no se publica en el registro del
-            # trabajo.
-            REGISTROS="$(find . -name 'config.log' -path '*other_builds*' 2>/dev/null | head -n 3)"
+            # trabajo. Se imprime entero: la orden exacta que falla y el error
+            # del compilador estan al principio, no al final.
+            REGISTRO="$(find . -name 'config.log' -path '*libffi*' -print -quit 2>/dev/null)"
 
-            if [ -z "${REGISTROS}" ]; then
-              echo "No se conservo ningun config.log. Arbol de compilacion:"
-              find . -maxdepth 7 -name 'libffi' -print 2>/dev/null | head -n 5
+            if [ -z "${REGISTRO}" ]; then
+              echo "No se conservo el config.log de libffi."
             else
-              for registro in ${REGISTROS}; do
-                echo "--- ${registro} ---"
-                tail -n 45 "${registro}"
-              done
+              echo "--- ${REGISTRO} ---"
+              head -n 200 "${REGISTRO}"
             fi
 
             exit 1
